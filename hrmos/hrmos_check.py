@@ -65,12 +65,27 @@ def get_google_auth_url():
     
     client_id = st.secrets["GOOGLE_CLIENT_ID"]
     
-    # 現在のURL（Streamlit Cloudの場合）を動的に取得
-    if "streamlit.app" in st.context.headers.get("host", ""):
-        redirect_uri = f"https://{st.context.headers['host']}/"
-    else:
-        # ローカル開発環境の場合
+    # 現在のURLを正確に取得
+    try:
+        # Streamlit Cloud の環境変数から取得
+        if "STREAMLIT_SHARING_MODE" in os.environ or "streamlit.app" in os.environ.get("HOST", ""):
+            # Streamlit Cloud環境
+            app_name = os.environ.get("STREAMLIT_APP_NAME", "")
+            if app_name:
+                redirect_uri = f"https://{app_name}.streamlit.app/"
+            else:
+                # フォールバック: secretsから取得
+                redirect_uri = st.secrets.get("REDIRECT_URI", "https://your-app.streamlit.app/")
+        else:
+            # ローカル環境
+            redirect_uri = "http://localhost:8501/"
+    except:
+        # エラー時のフォールバック
         redirect_uri = st.secrets.get("REDIRECT_URI", "http://localhost:8501/")
+    
+    # デバッグ情報表示（開発モードのみ）
+    if config.get("development_mode", False):
+        st.info(f"🔍 デバッグ: 使用するリダイレクトURI: {redirect_uri}")
     
     # OAuth2.0パラメータ
     params = {
@@ -79,7 +94,8 @@ def get_google_auth_url():
         'scope': 'email profile',
         'response_type': 'code',
         'access_type': 'offline',
-        'include_granted_scopes': 'true'
+        'include_granted_scopes': 'true',
+        'prompt': 'select_account'  # アカウント選択を強制
     }
     
     # URLエンコード
@@ -95,12 +111,24 @@ def get_google_user_info(code):
         return None
     
     try:
-        # 現在のURL（Streamlit Cloudの場合）を動的に取得
-        if "streamlit.app" in st.context.headers.get("host", ""):
-            redirect_uri = f"https://{st.context.headers['host']}/"
-        else:
-            # ローカル開発環境の場合
+        # 現在のURLを正確に取得（認証時と同じロジック）
+        try:
+            if "STREAMLIT_SHARING_MODE" in os.environ or "streamlit.app" in os.environ.get("HOST", ""):
+                # Streamlit Cloud環境
+                app_name = os.environ.get("STREAMLIT_APP_NAME", "")
+                if app_name:
+                    redirect_uri = f"https://{app_name}.streamlit.app/"
+                else:
+                    redirect_uri = st.secrets.get("REDIRECT_URI", "https://your-app.streamlit.app/")
+            else:
+                # ローカル環境
+                redirect_uri = "http://localhost:8501/"
+        except:
             redirect_uri = st.secrets.get("REDIRECT_URI", "http://localhost:8501/")
+        
+        # デバッグ情報
+        if config.get("development_mode", False):
+            st.info(f"🔍 デバッグ: トークン取得用リダイレクトURI: {redirect_uri}")
         
         # アクセストークン取得
         token_url = "https://oauth2.googleapis.com/token"
@@ -112,17 +140,27 @@ def get_google_user_info(code):
             "redirect_uri": redirect_uri
         }
         
+        # デバッグ情報
+        if config.get("development_mode", False):
+            debug_data = token_data.copy()
+            debug_data["client_secret"] = "***隠し***"
+            st.info(f"🔍 デバッグ: トークンリクエストデータ: {debug_data}")
+        
         token_response = requests.post(token_url, data=token_data)
         
         if token_response.status_code != 200:
-            st.error(f"トークン取得エラー: {token_response.status_code}")
+            st.error(f"❌ トークン取得エラー: {token_response.status_code}")
             st.error(f"レスポンス: {token_response.text}")
+            st.error(f"使用したリダイレクトURI: {redirect_uri}")
+            st.error("Google Cloud Console で以下を確認してください:")
+            st.error(f"1. {redirect_uri} が承認済みリダイレクトURIに登録されているか")
+            st.error("2. クライアントIDとシークレットが正しいか")
             return None
             
         token_json = token_response.json()
         
         if "access_token" not in token_json:
-            st.error(f"アクセストークンが見つかりません: {token_json}")
+            st.error(f"❌ アクセストークンが見つかりません: {token_json}")
             return None
             
         # ユーザー情報取得
@@ -130,13 +168,15 @@ def get_google_user_info(code):
         user_response = requests.get(user_info_url)
         
         if user_response.status_code != 200:
-            st.error(f"ユーザー情報取得エラー: {user_response.status_code}")
+            st.error(f"❌ ユーザー情報取得エラー: {user_response.status_code}")
             return None
             
         return user_response.json()
         
     except Exception as e:
-        st.error(f"認証エラー: {e}")
+        st.error(f"❌ 認証エラー: {e}")
+        import traceback
+        st.error(f"詳細: {traceback.format_exc()}")
         return None
 
 def check_user_permission(email, df_staff):
@@ -403,10 +443,59 @@ def handle_authentication():
             st.markdown("#### Google アカウント認証")
             st.info("Googleアカウントでログインして認証を行います。")
             
-            # シンプルなリンクベースの認証
+            # デバッグ情報の表示
+            if config["development_mode"]:
+                st.markdown("##### 🔧 デバッグ情報")
+                st.write(f"**Client ID:** {st.secrets.get('GOOGLE_CLIENT_ID', 'Not set')[:20]}...")
+                st.write(f"**Client Secret:** {'設定済み' if st.secrets.get('GOOGLE_CLIENT_SECRET') else '未設定'}")
+                
+                # 現在のURL情報
+                try:
+                    # 環境変数の確認
+                    st.write("**環境変数情報:**")
+                    st.write(f"- STREAMLIT_SHARING_MODE: {os.environ.get('STREAMLIT_SHARING_MODE', '未設定')}")
+                    st.write(f"- HOST: {os.environ.get('HOST', '未設定')}")
+                    st.write(f"- STREAMLIT_APP_NAME: {os.environ.get('STREAMLIT_APP_NAME', '未設定')}")
+                    
+                    # 推奨するリダイレクトURI
+                    st.write("**Google Cloud Console に登録すべきリダイレクトURI:**")
+                    
+                    # あなたのアプリのURLを特定
+                    app_url = st.text_input("あなたのStreamlitアプリのURL", 
+                                           placeholder="例: https://your-app-name.streamlit.app/",
+                                           help="Streamlit CloudのアプリURLを入力してください")
+                    
+                    if app_url:
+                        # 入力されたURLから推奨URIを生成
+                        recommended_uris = [
+                            app_url.rstrip('/') + '/',
+                            app_url.rstrip('/')
+                        ]
+                    else:
+                        # デフォルトの推奨URI
+                        recommended_uris = [
+                            "https://your-app-name.streamlit.app/",
+                            "https://your-app-name.streamlit.app"
+                        ]
+                    
+                    # ローカル開発用URI
+                    recommended_uris.extend([
+                        "http://localhost:8501/",
+                        "http://localhost:8501",
+                        "http://127.0.0.1:8501/",
+                        "http://127.0.0.1:8501"
+                    ])
+                    
+                    for uri in recommended_uris:
+                        st.code(uri)
+                        
+                except Exception as e:
+                    st.write(f"URL取得エラー: {e}")
+            
+            # 改善されたリンクベースの認証
             st.markdown(f"""
             <div style="text-align: center; margin: 2rem 0;">
-                <a href="{auth_url}" target="_self" style="
+                <a href="{auth_url}" target="_top" style="
                     display: inline-block;
                     background-color: #4285f4;
                     color: white;
@@ -415,11 +504,41 @@ def handle_authentication():
                     border-radius: 6px;
                     font-weight: bold;
                     font-size: 16px;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
                 ">🔐 Googleアカウントでログイン</a>
             </div>
             """, unsafe_allow_html=True)
             
             st.caption("↑ クリックしてGoogleアカウントでログインしてください")
+            
+            # 重要な注意事項
+            st.warning("⚠️ **重要**: このリンクをクリックする前に、Google Cloud Console で上記のリダイレクトURIがすべて登録されていることを確認してください。")
+            
+            # 追加のトラブルシューティング情報
+            with st.expander("🔧 認証がうまくいかない場合"):
+                st.markdown("""
+                **手順1: Google Cloud Console の設定確認**
+                1. [Google Cloud Console](https://console.cloud.google.com/) にアクセス
+                2. 「APIとサービス」→「認証情報」
+                3. 作成したOAuthクライアントIDを編集
+                4. 上記のデバッグ情報に表示されたすべてのURIを「承認済みのリダイレクトURI」に追加
+                
+                **手順2: OAuth同意画面の設定**
+                1. 「APIとサービス」→「OAuth同意画面」
+                2. アプリがテストモードの場合、「テストユーザー」にログインするユーザーを追加
+                3. または「本番環境に公開」をクリック
+                
+                **手順3: ブラウザのキャッシュクリア**
+                1. ブラウザのキャッシュと Cookie をクリア
+                2. シークレット/プライベートブラウジングで再試行
+                
+                **よくあるエラーと解決方法:**
+                - **「接続が拒否されました」**: リダイレクトURIの設定不備
+                - **「redirect_uri_mismatch」**: URIの完全一致が必要
+                - **「unauthorized_client」**: OAuth同意画面の設定未完了
+                - **「access_denied」**: ユーザーが認証を拒否、またはテストユーザー未追加
+                """)
+            
             st.markdown("---")
     
     # 開発モード: ユーザー選択（開発モードでのみ表示）
