@@ -29,7 +29,7 @@ gspread>=5.0.0
 def get_config():
     """設定情報を取得"""
     config = {
-        "development_mode": False,  # デフォルトは開発モード
+        "development_mode": False,
         "sheet_url": "https://docs.google.com/spreadsheets/d/1Ymt2OrvY2dKFs9puCX8My7frS_BS1sg3Yev3BLQm9xQ/edit",
         "has_secrets": False,
         "has_gcp_account": False,
@@ -40,35 +40,26 @@ def get_config():
     try:
         if hasattr(st, 'secrets') and st.secrets:
             config["has_secrets"] = True
-            config["development_mode"] = st.secrets.get("DEVELOPMENT_MODE", True)
+            config["development_mode"] = st.secrets.get("DEVELOPMENT_MODE", False)
             
             # Google Service Accountの確認
             if "gcp_service_account" in st.secrets:
                 config["has_gcp_account"] = True
             
-            # Google OAuth設定の確認（より詳細な検証）
+            # Google OAuth設定の確認
             required_oauth_keys = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]
             oauth_keys_present = all(key in st.secrets for key in required_oauth_keys)
             
             if oauth_keys_present:
-                # 値が空でないかチェック
                 client_id = str(st.secrets.get("GOOGLE_CLIENT_ID", "")).strip()
                 client_secret = str(st.secrets.get("GOOGLE_CLIENT_SECRET", "")).strip()
                 
                 if client_id and client_secret:
-                    # クライアントシークレットの形式をチェック
                     if client_secret.startswith("GOCSPX-") and len(client_secret) > 10:
                         config["has_oauth"] = True
-                    elif len(client_secret) > 20:  # 旧形式のシークレット
+                    elif len(client_secret) > 20:
                         config["has_oauth"] = True
-                    else:
-                        config["oauth_error"] = "クライアントシークレットの形式が正しくありません"
-                else:
-                    config["oauth_error"] = "クライアントIDまたはシークレットが空です"
-            else:
-                missing_keys = [key for key in required_oauth_keys if key not in st.secrets]
-                config["oauth_error"] = f"必要なキーが不足: {missing_keys}"
-                
+                        
     except Exception as e:
         config["config_error"] = str(e)
     
@@ -85,28 +76,18 @@ def get_google_auth_url():
     
     client_id = st.secrets["GOOGLE_CLIENT_ID"]
     
-    # 現在の環境を判定してリダイレクトURIを決定
+    # リダイレクトURIの決定
     try:
-        # Streamlit Cloud環境の検出
         if (hasattr(st, 'get_option') and 
             st.get_option('server.headless') and 
             'streamlit.app' in str(st.secrets.get("REDIRECT_URI", ""))):
-            # Streamlit Cloud環境
             redirect_uri = st.secrets.get("REDIRECT_URI", "https://your-app.streamlit.app/")
         elif 'localhost' in str(st.secrets.get("REDIRECT_URI", "")) or 'localhost' in os.environ.get("HOST", ""):
-            # ローカル環境
             redirect_uri = "http://localhost:8501/"
         else:
-            # 設定されたREDIRECT_URIを使用
             redirect_uri = st.secrets.get("REDIRECT_URI", "http://localhost:8501/")
-            
     except:
-        # フォールバック
         redirect_uri = st.secrets.get("REDIRECT_URI", "http://localhost:8501/")
-    
-    # デバッグ情報表示（開発モードのみ）
-    if config.get("development_mode", False):
-        st.info(f"🔍 デバッグ: 使用するリダイレクトURI: {redirect_uri}")
     
     # OAuth2.0パラメータ
     params = {
@@ -116,10 +97,9 @@ def get_google_auth_url():
         'response_type': 'code',
         'access_type': 'offline',
         'include_granted_scopes': 'true',
-        'prompt': 'select_account'  # アカウント選択を強制
+        'prompt': 'select_account'
     }
     
-    # URLエンコード
     query_string = urllib.parse.urlencode(params)
     auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{query_string}"
     
@@ -132,25 +112,18 @@ def get_google_user_info(code):
         return None
     
     try:
-        # 現在の環境を判定してリダイレクトURIを決定（認証時と同じロジック）
+        # リダイレクトURIの決定（認証時と同じロジック）
         try:
             if (hasattr(st, 'get_option') and 
                 st.get_option('server.headless') and 
                 'streamlit.app' in str(st.secrets.get("REDIRECT_URI", ""))):
-                # Streamlit Cloud環境
                 redirect_uri = st.secrets.get("REDIRECT_URI", "https://your-app.streamlit.app/")
             elif 'localhost' in str(st.secrets.get("REDIRECT_URI", "")) or 'localhost' in os.environ.get("HOST", ""):
-                # ローカル環境
                 redirect_uri = "http://localhost:8501/"
             else:
-                # 設定されたREDIRECT_URIを使用
                 redirect_uri = st.secrets.get("REDIRECT_URI", "http://localhost:8501/")
         except:
             redirect_uri = st.secrets.get("REDIRECT_URI", "http://localhost:8501/")
-        
-        # デバッグ情報
-        if config.get("development_mode", False):
-            st.info(f"🔍 デバッグ: トークン取得用リダイレクトURI: {redirect_uri}")
         
         # アクセストークン取得
         token_url = "https://oauth2.googleapis.com/token"
@@ -162,28 +135,17 @@ def get_google_user_info(code):
             "redirect_uri": redirect_uri
         }
         
-        # デバッグ情報
-        if config.get("development_mode", False):
-            debug_data = token_data.copy()
-            debug_data["client_secret"] = "***隠し***"
-            st.info(f"🔍 デバッグ: トークンリクエストデータ: {debug_data}")
-        
         token_response = requests.post(token_url, data=token_data)
         
         if token_response.status_code != 200:
-            st.error(f"❌ トークン取得エラー: {token_response.status_code}")
-            st.error(f"レスポンス: {token_response.text}")
-            st.error(f"使用したリダイレクトURI: {redirect_uri}")
-            st.error("Google Cloud Console で以下を確認してください:")
-            st.error(f"1. {redirect_uri} が承認済みリダイレクトURIに登録されているか")
-            st.error("2. クライアントIDとシークレットが正しいか")
-            st.error("3. 認証コードが期限切れでないか（10分以内に使用）")
+            st.error(f"❌ 認証エラー: {token_response.status_code}")
+            st.error("Google認証の設定を確認してください。")
             return None
             
         token_json = token_response.json()
         
         if "access_token" not in token_json:
-            st.error(f"❌ アクセストークンが見つかりません: {token_json}")
+            st.error(f"❌ アクセストークンの取得に失敗しました")
             return None
             
         # ユーザー情報取得
@@ -191,20 +153,17 @@ def get_google_user_info(code):
         user_response = requests.get(user_info_url)
         
         if user_response.status_code != 200:
-            st.error(f"❌ ユーザー情報取得エラー: {user_response.status_code}")
+            st.error(f"❌ ユーザー情報の取得に失敗しました")
             return None
             
         return user_response.json()
         
     except Exception as e:
         st.error(f"❌ 認証エラー: {e}")
-        import traceback
-        st.error(f"詳細: {traceback.format_exc()}")
         return None
 
 def check_user_permission(email, df_staff):
     """ユーザーの権限チェック"""
-    # 全ての権限レベルを許可（一般利用者も含む）
     valid_permissions = ["4. 承認者", "3. 利用者・承認者", "2. システム管理者", "5. 一般利用者"]
     user_data = df_staff[
         (df_staff["ログインID"] == email) & 
@@ -225,14 +184,12 @@ def get_credentials():
     
     try:
         if config["has_gcp_account"]:
-            # Streamlit Secretsからサービスアカウント情報を取得
             credentials = service_account.Credentials.from_service_account_info(
                 st.secrets["gcp_service_account"],
                 scopes=["https://www.googleapis.com/auth/spreadsheets"]
             )
             return credentials
         else:
-            # 代替手段: 環境変数やローカルファイル
             json_paths = [
                 "/Users/poca/hrmos/mineral-liberty-460106-m7-a24c4c78154f.json",
                 "./service_account.json",
@@ -247,24 +204,8 @@ def get_credentials():
                     )
                     return credentials
             
-            # どの方法でも認証情報が取得できない場合
             st.error("Google Service Account認証情報が見つかりません。")
-            st.info("以下のいずれかの方法で設定してください:")
-            st.code("""
-1. Streamlit Secrets設定:
-   [gcp_service_account]
-   type = "service_account"
-   project_id = "your-project-id"
-   private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
-   client_email = "your-service-account@project.iam.gserviceaccount.com"
-   # ... 他の設定
-
-2. 環境変数:
-   GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
-
-3. ローカルファイル:
-   ./service_account.json
-            """)
+            st.info("Streamlit Secretsに gcp_service_account を設定してください。")
             return None
             
     except Exception as e:
@@ -272,7 +213,7 @@ def get_credentials():
         return None
 
 # --- データ読み込み ---
-@st.cache_data(ttl=300)  # 5分間キャッシュ
+@st.cache_data(ttl=300)
 def load_spreadsheet_data():
     """スプレッドシートからデータを読み込み"""
     credentials = get_credentials()
@@ -311,38 +252,30 @@ def load_spreadsheet_data():
         
     except Exception as e:
         st.error(f"スプレッドシート読み込みエラー: {e}")
-        st.info("以下を確認してください:")
-        st.info("1. スプレッドシートのURLが正しいか")
-        st.info("2. サービスアカウントがスプレッドシートに共有されているか")
-        st.info("3. 「勤怠確認シート(打刻管理)」シートと「社員一覧」シートが存在するか")
+        st.info("スプレッドシートの設定を確認してください。")
         return None, None
 
-# --- ユーザーフィルタリング関数（修正版） ---
+# --- ユーザーフィルタリング関数 ---
 def apply_user_filter(merged, user_permission, current_user_fullname, current_user_login_id, current_user_employee_id):
     """ユーザー権限に基づくデータフィルタリング"""
     
     if user_permission == "2. システム管理者":
-        # システム管理者：全データを表示
         return merged.copy()
         
     elif user_permission in ["4. 承認者", "3. 利用者・承認者"]:
-        # 承認者：承認対象のスタッフのデータを表示
         return merged[
-            (merged["承認者"] == current_user_login_id) |  # ログインIDでの一致
-            (merged["承認者"] == current_user_fullname) |  # フルネームでの一致
-            (merged["承認者フルネーム"] == current_user_fullname)  # 承認者フルネームでの一致
+            (merged["承認者"] == current_user_login_id) |
+            (merged["承認者"] == current_user_fullname) |
+            (merged["承認者フルネーム"] == current_user_fullname)
         ]
         
     elif user_permission == "5. 一般利用者":
-        # データ型を統一してクリーニング
         merged_clean = merged.copy()
         merged_clean["社員番号"] = merged_clean["社員番号"].astype(str).str.strip()
         current_user_employee_id_clean = str(current_user_employee_id).strip()
         
-        # 基本条件：社員番号での一致
         conditions = (merged_clean["社員番号"] == current_user_employee_id_clean)
         
-        # ログインID列が存在する場合の追加条件
         if "ログインID" in merged_clean.columns:
             merged_clean["ログインID"] = merged_clean["ログインID"].astype(str).str.strip()
             current_user_login_id_clean = str(current_user_login_id).strip()
@@ -352,7 +285,6 @@ def apply_user_filter(merged, user_permission, current_user_fullname, current_us
         return merged_clean[conditions]
     
     else:
-        # 不明な権限の場合は空のデータフレームを返す
         return merged.iloc[0:0]
 
 # --- 認証システム ---
@@ -375,7 +307,6 @@ def handle_authentication():
             user_info = get_google_user_info(code)
         
         if user_info and "email" in user_info:
-            # データ読み込み
             with st.spinner("ユーザー権限を確認中..."):
                 df_kintai, df_staff = load_spreadsheet_data()
                 
@@ -383,7 +314,6 @@ def handle_authentication():
                 has_permission, staff_info = check_user_permission(user_info["email"], df_staff)
                 
                 if has_permission:
-                    # セッション状態設定
                     st.session_state.authenticated = True
                     st.session_state.user_info = staff_info.to_dict()
                     st.session_state.user_email = user_info["email"]
@@ -391,16 +321,13 @@ def handle_authentication():
                     given_name = str(staff_info.get('名', '')).strip()
                     st.session_state.user_name = f"{surname}{given_name}"
                     
-                    # URLパラメータをクリア
                     st.query_params.clear()
                     st.success("ログインに成功しました！")
                     st.rerun()
                 else:
                     st.error("❌ アクセス権限がありません")
                     st.error("権限が設定されているメールアドレスでログインしてください。")
-                    st.info(f"使用されたメールアドレス: {user_info['email']}")
                     
-                    # ログイン画面に戻るボタン
                     if st.button("ログイン画面に戻る"):
                         st.query_params.clear()
                         st.rerun()
@@ -410,9 +337,7 @@ def handle_authentication():
                 st.stop()
         else:
             st.error("❌ 認証に失敗しました")
-            st.info("もう一度ログインを試してください。")
             
-            # ログイン画面に戻るボタン
             if st.button("ログイン画面に戻る"):
                 st.query_params.clear()
                 st.rerun()
@@ -423,9 +348,6 @@ def handle_authentication():
     st.markdown("---")
     
     # 設定状況の表示
-    if config["development_mode"]:
-        st.info("🔧 開発モードで動作中")
-    
     status_cols = st.columns(3)
     with status_cols[0]:
         if config["has_secrets"]:
@@ -442,297 +364,52 @@ def handle_authentication():
     with status_cols[2]:
         if config["has_oauth"]:
             st.success("✅ Google OAuth")
-        elif "oauth_error" in config:
-            st.error("❌ Google OAuth")
-            st.error(f"エラー: {config['oauth_error']}")
         else:
             st.error("❌ Google OAuth")
     
-    # 設定エラーの表示
-    if "config_error" in config:
-        st.error(f"設定エラー: {config['config_error']}")
-    
-    # OAuth設定の詳細チェック
-    if config["has_secrets"] and not config["has_oauth"]:
-        with st.expander("🔧 OAuth設定の詳細診断"):
-            st.markdown("**現在のOAuth設定状況:**")
-            
-            # 各キーの存在チェック
-            oauth_keys = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "REDIRECT_URI"]
-            for key in oauth_keys:
-                if key in st.secrets:
-                    value = str(st.secrets[key]).strip()
-                    if value:
-                        if key == "GOOGLE_CLIENT_SECRET":
-                            # シークレットは最初の数文字のみ表示
-                            display_value = f"{value[:10]}..." if len(value) > 10 else "短すぎます"
-                            if value.startswith("GOCSPX-"):
-                                st.success(f"✅ {key}: {display_value} (正しい形式)")
-                            else:
-                                st.warning(f"⚠️ {key}: {display_value} (GOCSPX-で始まらない)")
-                        else:
-                            st.success(f"✅ {key}: {value}")
-                    else:
-                        st.error(f"❌ {key}: 空の値")
-                else:
-                    st.error(f"❌ {key}: 設定されていません")
-            
-            # 正しい設定例を表示
-            st.markdown("**正しい設定例 (secrets.toml):**")
-            st.code('''
-GOOGLE_CLIENT_ID = "123456789-abcdefg.apps.googleusercontent.com"
-GOOGLE_CLIENT_SECRET = "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"
-REDIRECT_URI = "https://your-app-name.streamlit.app/"
-DEVELOPMENT_MODE = true
-            ''')
-            
-            st.markdown("**重要なポイント:**")
-            st.markdown("- すべての値を引用符(\")で囲む")
-            st.markdown("- クライアントシークレットは GOCSPX- で始まる")
-            st.markdown("- REDIRECT_URI は実際のアプリURL")
-            st.markdown("- ハイフンやドットを含む値は必ず引用符で囲む")
-    
-    # データ読み込みテスト
+    # データ接続確認
     with st.spinner("データ接続を確認中..."):
         df_kintai, df_staff = load_spreadsheet_data()
     
     if df_staff is None:
         st.error("❌ データの読み込みに失敗しました")
-        st.error("設定を確認してください。")
         st.stop()
     else:
         st.success("✅ データ接続成功")
     
     # 認証方式の選択
-    st.markdown("### 🔑 ログイン方式を選択")
+    st.markdown("### 🔑 ログイン")
     
-    # OAuth認証が利用可能な場合
+    # OAuth認証
     if config["has_oauth"]:
         auth_url = get_google_auth_url()
         if auth_url:
             st.markdown("#### Google アカウント認証")
-            st.info("Googleアカウントでログインして認証を行います。")
+            st.info("Googleアカウントでログインしてください。")
             
-            # 重要な注意事項を最初に表示
-            st.error("🚨 **重要**: Streamlit Cloud のセキュリティ制限により、直接リンクでの認証が制限されています。")
-            st.warning("⚠️ 以下の手順で認証を行ってください：")
-            
-            # 手動認証の手順
-            st.markdown("""
-            **手動認証手順:**
-            1. 下記の認証URLをコピー
-            2. **新しいタブ**で認証URLを開く
-            3. Google認証を完了
-            4. 認証後のURL（?code=xxx が含まれるURL）をコピー
-            5. 下記の入力欄にURLを貼り付け
-            """)
-            
-            # 認証URLの表示
-            st.text_area(
-                "認証URL（このURLを新しいタブで開いてください）:",
-                value=auth_url,
-                height=100,
-                help="このURLをコピーして新しいタブで開いてください"
-            )
-            
-            # コピーボタン（JavaScript使用）
-            st.markdown(f"""
-            <button onclick="navigator.clipboard.writeText('{auth_url}').then(function() {{
-                alert('認証URLをコピーしました！新しいタブで開いてください。');
-            }});" style="
-                background-color: #4CAF50;
-                color: white;
-                padding: 10px 20px;
-                border: none;
-                border-radius: 4px;
-                cursor: pointer;
-                margin: 10px 0;
-            ">📋 認証URLをコピー</button>
-            """, unsafe_allow_html=True)
-            
-            st.markdown("---")
-            
-            # 認証後のURL入力
-            st.markdown("**Step 2: 認証完了後のURL入力**")
-            
-            auth_result_url = st.text_input(
-                "認証完了後のURLを貼り付けてください:",
-                placeholder="https://your-app.streamlit.app/?code=4/0AX4XfWi...",
-                help="Google認証完了後、ブラウザのアドレスバーに表示されるURL（?code=で始まるパラメータを含む）を貼り付けてください"
-            )
-            
-            if auth_result_url and "code=" in auth_result_url:
-                # URLからcodeパラメータを抽出
-                try:
-                    from urllib.parse import urlparse, parse_qs
-                    parsed_url = urlparse(auth_result_url)
-                    query_params = parse_qs(parsed_url.query)
-                    
-                    if "code" in query_params:
-                        auth_code = query_params["code"][0]
-                        
-                        if st.button("🔐 認証を完了する", type="primary"):
-                            with st.spinner("認証中..."):
-                                user_info = get_google_user_info(auth_code)
-                            
-                            if user_info and "email" in user_info:
-                                # データ読み込み
-                                with st.spinner("ユーザー権限を確認中..."):
-                                    df_kintai, df_staff = load_spreadsheet_data()
-                                    
-                                if df_staff is not None:
-                                    has_permission, staff_info = check_user_permission(user_info["email"], df_staff)
-                                    
-                                    if has_permission:
-                                        # セッション状態設定
-                                        st.session_state.authenticated = True
-                                        st.session_state.user_info = staff_info.to_dict()
-                                        st.session_state.user_email = user_info["email"]
-                                        surname = str(staff_info.get('姓', '')).strip()
-                                        given_name = str(staff_info.get('名', '')).strip()
-                                        st.session_state.user_name = f"{surname}{given_name}"
-                                        
-                                        st.success("✅ ログインに成功しました！")
-                                        st.rerun()
-                                    else:
-                                        st.error("❌ アクセス権限がありません")
-                                        st.error("権限が設定されているメールアドレスでログインしてください。")
-                                        st.info(f"使用されたメールアドレス: {user_info['email']}")
-                                else:
-                                    st.error("❌ データの読み込みに失敗しました。")
-                            else:
-                                st.error("❌ 認証に失敗しました")
-                    else:
-                        st.error("❌ 認証コードが見つかりません。正しいURLを入力してください。")
-                        
-                except Exception as e:
-                    st.error(f"❌ URL解析エラー: {e}")
-            
-            elif auth_result_url and "code=" not in auth_result_url:
-                st.error("❌ 入力されたURLに認証コードが含まれていません。Google認証完了後のURLを入力してください。")
-            
-            # デバッグ情報の表示
-            if config["development_mode"]:
-                st.markdown("---")
-                st.markdown("##### 🔧 デバッグ情報")
-                st.write(f"**Client ID:** {st.secrets.get('GOOGLE_CLIENT_ID', 'Not set')[:20]}...")
-                st.write(f"**Client Secret:** {'設定済み' if st.secrets.get('GOOGLE_CLIENT_SECRET') else '未設定'}")
-                
-                # 環境変数の確認
-                st.write("**環境変数情報:**")
-                st.write(f"- STREAMLIT_SHARING_MODE: {os.environ.get('STREAMLIT_SHARING_MODE', '未設定')}")
-                st.write(f"- HOST: {os.environ.get('HOST', '未設定')}")
-                st.write(f"- STREAMLIT_APP_NAME: {os.environ.get('STREAMLIT_APP_NAME', '未設定')}")
-                
-                # 推奨するリダイレクトURI
-                st.write("**Google Cloud Console に登録すべきリダイレクトURI:**")
-                
-                # あなたのアプリのURLを特定
-                app_url = st.text_input("あなたのStreamlitアプリのURL", 
-                                       placeholder="例: https://your-app-name.streamlit.app/",
-                                       help="Streamlit CloudのアプリURLを入力してください")
-                
-                # Secrets.tomlの設定例も表示
-                st.write("**Streamlit Secrets (secrets.toml) の設定例:**")
-                
-                if app_url:
-                    # 入力されたURLから推奨URIを生成
-                    app_url_clean = app_url.rstrip('/')
-                    recommended_uris = [
-                        f"{app_url_clean}/",
-                        app_url_clean
-                    ]
-                    
-                    st.code(f"""
-GOOGLE_CLIENT_ID = "your-google-client-id"
-GOOGLE_CLIENT_SECRET = "your-google-client-secret"
-REDIRECT_URI = "{app_url_clean}/"
-DEVELOPMENT_MODE = false
-                    """)
-                else:
-                    # デフォルトの推奨URI
-                    recommended_uris = [
-                        "https://your-app-name.streamlit.app/",
-                        "https://your-app-name.streamlit.app"
-                    ]
-                    
-                    st.code("""
-GOOGLE_CLIENT_ID = "your-google-client-id"
-GOOGLE_CLIENT_SECRET = "your-google-client-secret"
-REDIRECT_URI = "https://your-app-name.streamlit.app/"
-DEVELOPMENT_MODE = false
-                    """)
-                
-                st.write("**Google Cloud Console に登録するURI:**")
-                
-                # ローカル開発用URI
-                recommended_uris.extend([
-                    "http://localhost:8501/",
-                    "http://localhost:8501",
-                    "http://127.0.0.1:8501/",
-                    "http://127.0.0.1:8501"
-                ])
-                
-                for i, uri in enumerate(recommended_uris, 1):
-                    st.code(f"{i}. {uri}")
-                
-                # 現在の設定状況
-                current_redirect = st.secrets.get("REDIRECT_URI", "未設定")
-                st.write(f"**現在の設定:** `REDIRECT_URI = {current_redirect}`")
-                
-                if 'localhost' in current_redirect and app_url and 'streamlit.app' in app_url:
-                    st.warning("⚠️ **設定不一致**: Streamlit Cloudで動作中ですが、REDIRECT_URIがlocalhostに設定されています。")
-                    st.info(f"REDIRECT_URIを `{app_url.rstrip('/')}/` に変更してください。")
-            
-            # 追加のトラブルシューティング情報
-            with st.expander("🔧 トラブルシューティング"):
-                st.markdown("""
-                **認証がうまくいかない場合:**
-                
-                **1. Google Cloud Console の設定確認**
-                - [Google Cloud Console](https://console.cloud.google.com/) にアクセス
-                - 「APIとサービス」→「認証情報」→ OAuthクライアントIDを編集
-                - 「承認済みのリダイレクトURI」に正しいURLが登録されているか確認
-                
-                **2. OAuth同意画面の設定**
-                - 「APIとサービス」→「OAuth同意画面」
-                - テストモードの場合：「テストユーザー」にログインユーザーを追加
-                - または「本番環境に公開」を選択
-                
-                **3. よくあるエラー**
-                - **redirect_uri_mismatch**: リダイレクトURIの設定不備
-                - **unauthorized_client**: OAuth同意画面の設定未完了
-                - **access_denied**: テストユーザー未追加、または認証拒否
-                
-                **4. 代替案：開発モード**
-                下記の開発モードを使用することも可能です（テスト目的のみ）。
-                """)
+            if st.button("🔐 Googleでログイン", type="primary", use_container_width=True):
+                st.markdown(f'<meta http-equiv="refresh" content="0;url={auth_url}">', unsafe_allow_html=True)
+                st.markdown(f"[こちらをクリック]({auth_url})してGoogle認証を完了してください。", unsafe_allow_html=True)
             
             st.markdown("---")
     
-    # 開発モード: ユーザー選択（開発モードでのみ表示）
+    # 開発モード
     if config["development_mode"]:
         st.markdown("#### 🛠️ 開発モード: ユーザー選択")
         st.warning("⚠️ 本番環境ではこの選択肢は表示されません")
         
-        # 権限のあるユーザーを取得
         valid_permissions = ["4. 承認者", "3. 利用者・承認者", "2. システム管理者", "5. 一般利用者"]
         
         if "権限" not in df_staff.columns:
             st.error("社員一覧に「権限」列が見つかりません。")
-            st.info("必要な列: ログインID(B列), 社員番号(D列), 姓(E列), 名(F列), 権限(BL列)")
             st.stop()
         
         authorized_users = df_staff[df_staff["権限"].isin(valid_permissions)]
         
         if len(authorized_users) == 0:
             st.error("権限のあるユーザーが見つかりません。")
-            st.info("社員一覧の権限列に以下のいずれかが設定されているユーザーが必要です:")
-            for perm in valid_permissions:
-                st.info(f"- {perm}")
             st.stop()
         
-        # ユーザー選択
         user_options = ["選択してください"]
         user_data = {}
         
@@ -753,7 +430,6 @@ DEVELOPMENT_MODE = false
             if st.button("ログイン", type="primary"):
                 user_info = user_data[selected_user]
                 
-                # セッション状態設定
                 st.session_state.authenticated = True
                 st.session_state.user_info = user_info
                 st.session_state.user_email = user_info.get('ログインID', '')
@@ -763,17 +439,6 @@ DEVELOPMENT_MODE = false
                 
                 st.success("ログインしました！")
                 st.rerun()
-    
-    # 設定ガイド
-    if not config["has_oauth"]:
-        st.markdown("---")
-        st.markdown("#### ⚙️ Google OAuth設定")
-        st.info("本格的なGoogle認証を有効にするには、Streamlit Secretsに以下を追加してください:")
-        st.code("""
-GOOGLE_CLIENT_ID = "your-client-id"
-GOOGLE_CLIENT_SECRET = "your-client-secret"
-REDIRECT_URI = "https://your-app.streamlit.app/"
-        """)
     
     return False
 
@@ -789,15 +454,11 @@ def main_app():
     
     # データ整形
     if "第一承認者" in df_staff.columns:
-        # 社員一覧で姓名を結合した承認者名を作成
         df_staff_with_fullname = df_staff.copy()
         df_staff_with_fullname["承認者フルネーム"] = df_staff_with_fullname["姓"].astype(str) + df_staff_with_fullname["名"].astype(str)
         
-        # 勤怠データとマージ
         merged = pd.merge(df_kintai, df_staff[["社員番号", "第一承認者"]], on="社員番号", how="left")
         merged = merged.rename(columns={"第一承認者": "承認者"})
-        
-        # 承認者フルネーム情報も追加
         merged = pd.merge(merged, df_staff_with_fullname[["社員番号", "承認者フルネーム"]], on="社員番号", how="left")
     else:
         st.warning("社員一覧に「第一承認者」列が見つかりません。")
@@ -809,12 +470,10 @@ def main_app():
     user_info = st.session_state.user_info
     user_permission = user_info.get("権限", "")
     
-    # 現在ログインしているユーザーのフルネーム
     current_user_fullname = st.session_state.user_name
     current_user_login_id = user_info.get("ログインID", "")
     current_user_employee_id = user_info.get("社員番号", "")
     
-    # 修正されたフィルタリング関数を使用
     filtered = apply_user_filter(
         merged, 
         user_permission, 
@@ -834,10 +493,6 @@ def main_app():
             font-size: 20px; font-weight: bold; padding: 0.5rem;
             display: inline-block; margin-bottom: 1rem;
         }
-        .auth-method {
-            background-color: #e8f4fd; padding: 0.5rem;
-            border-radius: 0.25rem; margin-bottom: 1rem; font-size: 0.9em;
-        }
     </style>
     """, unsafe_allow_html=True)
     
@@ -847,15 +502,10 @@ def main_app():
         st.title("📊 勤怠確認チェックツール")
     with col2:
         if st.button("🚪 ログアウト"):
-            # セッション状態をクリア
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.query_params.clear()
             st.rerun()
-    
-    # 認証方法の表示
-    auth_method = "Google OAuth認証" if "code" in st.query_params else "開発モード"
-    st.markdown(f"<div class='auth-method'>🔐 認証方法: {auth_method}</div>", unsafe_allow_html=True)
     
     # ユーザー情報表示
     st.markdown(f"""
@@ -865,52 +515,6 @@ def main_app():
     </div>
     """, unsafe_allow_html=True)
     
-    # 開発モード時のデバッグ情報
-    config = get_config()
-    if config["development_mode"]:
-        with st.expander("🔍 デバッグ情報"):
-            st.write(f"**現在のユーザー名:** {current_user_fullname}")
-            st.write(f"**ログインID:** {current_user_login_id}")
-            st.write(f"**社員番号:** {current_user_employee_id}")
-            st.write(f"**権限:** {user_permission}")
-            
-            if user_permission in ["4. 承認者", "3. 利用者・承認者"]:
-                # 承認者として設定されているデータの確認
-                approval_matches = merged[
-                    (merged["承認者"] == current_user_login_id) |
-                    (merged["承認者"] == current_user_fullname) |
-                    (merged["承認者フルネーム"] == current_user_fullname)
-                ]
-                
-                if len(approval_matches) > 0:
-                    st.write(f"**承認対象者数:** {len(approval_matches)}名")
-                    st.write("**承認対象者一覧:**")
-                    debug_display = approval_matches[["社員番号", "名前", "承認者", "承認者フルネーム"]].head(10)
-                    st.dataframe(debug_display)
-                else:
-                    st.write("**承認対象者:** なし")
-                    st.write("**確認項目:**")
-                    st.write("- 勤怠データの「第一承認者」列にあなたの名前またはログインIDが設定されているか")
-                    st.write("- 姓名の表記が一致しているか（姓名間のスペースなど）")
-            
-            elif user_permission == "5. 一般利用者":
-                st.write("**表示対象:** 自分のデータのみ")
-                st.write(f"**フィルタリング条件:** 社員番号={current_user_employee_id}")
-                
-                if len(filtered) > 0:
-                    st.write("**自分のデータ:**")
-                    st.dataframe(filtered[["社員番号", "名前"]].head(1))
-                else:
-                    st.write("**注意:** 自分のデータが見つかりません")
-                    st.write("**検索に使用した情報:**")
-                    st.write(f"- 社員番号: '{current_user_employee_id}'")
-                    st.write(f"- ログインID: '{current_user_login_id}'")
-                    
-                    st.write("**勤怠データ内の社員番号（最初の5件）:**")
-                    sample_ids = merged["社員番号"].unique()[:5]
-                    for sid in sample_ids:
-                        st.write(f"- '{sid}'")
-    
     # データ表示
     display_columns = [
         "社員番号", "名前", "休日出勤", "有休日数", "欠勤日数", "出勤時間",
@@ -918,7 +522,6 @@ def main_app():
         "60時間超過残業", "打刻ズレ", "勤怠マイナス分"
     ]
     
-    # 存在する列のみ表示
     available_columns = [col for col in display_columns if col in filtered.columns]
     
     if len(filtered) > 0:
@@ -934,7 +537,6 @@ def main_app():
         st.markdown(f"<div class='header-box'>📋 {permission_label}: {len(filtered)}名</div>", unsafe_allow_html=True)
         
         if available_columns:
-            # データをそのまま表示（一切の加工なし）
             display_df = filtered[available_columns]
             st.dataframe(display_df, use_container_width=True)
         else:
@@ -946,25 +548,6 @@ def main_app():
             st.info("📋 承認対象のスタッフがいません。第一承認者として割り当てられているスタッフのデータのみ表示されます。")
         elif user_permission == "5. 一般利用者":
             st.info("📋 あなたの勤怠データが見つかりません。")
-            
-            # デバッグ情報を表示
-            with st.expander("🔍 詳細情報（トラブルシューティング）"):
-                st.write(f"**検索条件:**")
-                st.write(f"- 社員番号: '{current_user_employee_id}'")
-                st.write(f"- ログインID: '{current_user_login_id}'")
-                
-                st.write(f"**勤怠データ内の社員番号一覧（最初の10件）:**")
-                unique_ids = merged["社員番号"].unique()[:10]
-                for uid in unique_ids:
-                    st.write(f"- '{uid}'")
-                
-                st.write(f"**完全一致チェック:**")
-                exact_match = merged[merged["社員番号"].astype(str).str.strip() == str(current_user_employee_id).strip()]
-                st.write(f"- 社員番号完全一致: {len(exact_match)}件")
-                
-                if "ログインID" in merged.columns:
-                    login_match = merged[merged["ログインID"].astype(str).str.strip() == str(current_user_login_id).strip()]
-                    st.write(f"- ログインID完全一致: {len(login_match)}件")
         else:
             st.info("📋 表示可能なデータがありません。")
 
