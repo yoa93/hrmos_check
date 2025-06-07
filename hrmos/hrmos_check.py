@@ -64,7 +64,13 @@ def get_google_auth_url():
     import urllib.parse
     
     client_id = st.secrets["GOOGLE_CLIENT_ID"]
-    redirect_uri = st.secrets["REDIRECT_URI"]
+    
+    # 現在のURL（Streamlit Cloudの場合）を動的に取得
+    if "streamlit.app" in st.context.headers.get("host", ""):
+        redirect_uri = f"https://{st.context.headers['host']}/"
+    else:
+        # ローカル開発環境の場合
+        redirect_uri = st.secrets.get("REDIRECT_URI", "http://localhost:8501/")
     
     # OAuth2.0パラメータ
     params = {
@@ -89,6 +95,13 @@ def get_google_user_info(code):
         return None
     
     try:
+        # 現在のURL（Streamlit Cloudの場合）を動的に取得
+        if "streamlit.app" in st.context.headers.get("host", ""):
+            redirect_uri = f"https://{st.context.headers['host']}/"
+        else:
+            # ローカル開発環境の場合
+            redirect_uri = st.secrets.get("REDIRECT_URI", "http://localhost:8501/")
+        
         # アクセストークン取得
         token_url = "https://oauth2.googleapis.com/token"
         token_data = {
@@ -96,7 +109,7 @@ def get_google_user_info(code):
             "client_secret": st.secrets["GOOGLE_CLIENT_SECRET"],
             "code": code,
             "grant_type": "authorization_code",
-            "redirect_uri": st.secrets["REDIRECT_URI"]
+            "redirect_uri": redirect_uri
         }
         
         token_response = requests.post(token_url, data=token_data)
