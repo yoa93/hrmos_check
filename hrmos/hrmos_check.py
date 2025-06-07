@@ -98,16 +98,30 @@ def get_google_user_info(code):
             "grant_type": "authorization_code",
             "redirect_uri": st.secrets["REDIRECT_URI"]
         }
+        
         token_response = requests.post(token_url, data=token_data)
+        
+        if token_response.status_code != 200:
+            st.error(f"トークン取得エラー: {token_response.status_code}")
+            st.error(f"レスポンス: {token_response.text}")
+            return None
+            
         token_json = token_response.json()
         
         if "access_token" not in token_json:
+            st.error(f"アクセストークンが見つかりません: {token_json}")
             return None
             
         # ユーザー情報取得
         user_info_url = f"https://www.googleapis.com/oauth2/v2/userinfo?access_token={token_json['access_token']}"
         user_response = requests.get(user_info_url)
+        
+        if user_response.status_code != 200:
+            st.error(f"ユーザー情報取得エラー: {user_response.status_code}")
+            return None
+            
         return user_response.json()
+        
     except Exception as e:
         st.error(f"認証エラー: {e}")
         return None
@@ -241,11 +255,15 @@ def handle_authentication():
     query_params = st.query_params
     if "code" in query_params and config["has_oauth"]:
         code = query_params["code"]
-        user_info = get_google_user_info(code)
+        
+        with st.spinner("認証中..."):
+            user_info = get_google_user_info(code)
         
         if user_info and "email" in user_info:
             # データ読み込み
-            df_kintai, df_staff = load_spreadsheet_data()
+            with st.spinner("ユーザー権限を確認中..."):
+                df_kintai, df_staff = load_spreadsheet_data()
+                
             if df_staff is not None:
                 has_permission, staff_info = check_user_permission(user_info["email"], df_staff)
                 
@@ -260,84 +278,102 @@ def handle_authentication():
                     
                     # URLパラメータをクリア
                     st.query_params.clear()
+                    st.success("ログインに成功しました！")
                     st.rerun()
                 else:
-                    st.error("アクセス権限がありません。権限が設定されているメールアドレスでログインしてください。")
+                    st.error("❌ アクセス権限がありません")
+                    st.error("権限が設定されているメールアドレスでログインしてください。")
+                    st.info(f"使用されたメールアドレス: {user_info['email']}")
+                    
+                    # ログイン画面に戻るボタン
+                    if st.button("ログイン画面に戻る"):
+                        st.query_params.clear()
+                        st.rerun()
                     st.stop()
+            else:
+                st.error("データの読み込みに失敗しました。")
+                st.stop()
         else:
-            st.error("認証に失敗しました。")
+            st.error("❌ 認証に失敗しました")
+            st.info("もう一度ログインを試してください。")
+            
+            # ログイン画面に戻るボタン
+            if st.button("ログイン画面に戻る"):
+                st.query_params.clear()
+                st.rerun()
             st.stop()
     
     # ログイン画面
-    st.title("勤怠確認チェックツール")
+    st.title("🔐 勤怠確認チェックツール")
     st.markdown("---")
     
     # 設定状況の表示
     if config["development_mode"]:
         st.info("🔧 開発モードで動作中")
     
-    if not config["has_secrets"]:
-        st.warning("⚠️ Streamlit Secrets が設定されていません")
+    status_cols = st.columns(3)
+    with status_cols[0]:
+        if config["has_secrets"]:
+            st.success("✅ Streamlit Secrets")
+        else:
+            st.error("❌ Streamlit Secrets")
     
-    if not config["has_gcp_account"]:
-        st.warning("⚠️ Google Service Account が設定されていません")
+    with status_cols[1]:
+        if config["has_gcp_account"]:
+            st.success("✅ Google Service Account")
+        else:
+            st.error("❌ Google Service Account")
     
-    if not config["has_oauth"]:
-        st.warning("⚠️ Google OAuth が設定されていません")
+    with status_cols[2]:
+        if config["has_oauth"]:
+            st.success("✅ Google OAuth")
+        else:
+            st.error("❌ Google OAuth")
     
     # データ読み込みテスト
-    with st.spinner("データ読み込み中..."):
+    with st.spinner("データ接続を確認中..."):
         df_kintai, df_staff = load_spreadsheet_data()
     
     if df_staff is None:
-        st.error("データの読み込みに失敗しました。設定を確認してください。")
+        st.error("❌ データの読み込みに失敗しました")
+        st.error("設定を確認してください。")
         st.stop()
+    else:
+        st.success("✅ データ接続成功")
     
     # 認証方式の選択
-    st.markdown("### ログイン方式を選択")
+    st.markdown("### 🔑 ログイン方式を選択")
     
     # OAuth認証が利用可能な場合
     if config["has_oauth"]:
         auth_url = get_google_auth_url()
         if auth_url:
             st.markdown("#### Google アカウント認証")
+            st.info("Googleアカウントでログインして認証を行います。")
             
-            # 方法1: セッション状態を使用したリダイレクト管理
-            if "redirect_initiated" not in st.session_state:
-                st.session_state.redirect_initiated = False
+            # シンプルなリンクベースの認証
+            st.markdown(f"""
+            <div style="text-align: center; margin: 2rem 0;">
+                <a href="{auth_url}" target="_self" style="
+                    display: inline-block;
+                    background-color: #4285f4;
+                    color: white;
+                    padding: 12px 24px;
+                    text-decoration: none;
+                    border-radius: 6px;
+                    font-weight: bold;
+                    font-size: 16px;
+                ">🔐 Googleアカウントでログイン</a>
+            </div>
+            """, unsafe_allow_html=True)
             
-            if st.button("🔐 Googleアカウントでログイン", type="primary", use_container_width=True):
-                st.session_state.redirect_initiated = True
-                st.rerun()
-            
-            # リダイレクトの実行
-            if st.session_state.redirect_initiated:
-                st.info("Googleログイン画面にリダイレクトしています...")
-                # meta refreshを使用したリダイレクト
-                redirect_html = f"""
-                <meta http-equiv="refresh" content="0; url={auth_url}">
-                <script>
-                    window.location.href = "{auth_url}";
-                </script>
-                """
-                st.markdown(redirect_html, unsafe_allow_html=True)
-                
-                # リダイレクトが失敗した場合のフォールバック
-                time.sleep(2)
-                st.markdown(f"### 自動リダイレクトが動作しない場合は、[こちらをクリック]({auth_url})してください。")
-                st.stop()
-            
-            # 方法2: 直接リンク（常に表示）
-            st.markdown("---")
-            st.markdown("**手動でログインする場合:**")
-            st.markdown(f"[Googleアカウントでログインする]({auth_url})")
-            st.caption("↑自動リダイレクトが動作しない場合はこちらをクリックしてください")
+            st.caption("↑ クリックしてGoogleアカウントでログインしてください")
             st.markdown("---")
     
     # 開発モード: ユーザー選択（開発モードでのみ表示）
     if config["development_mode"]:
-        st.markdown("#### 開発モード: ユーザー選択")
-        st.info("💡 本番環境ではこの選択肢は表示されません")
+        st.markdown("#### 🛠️ 開発モード: ユーザー選択")
+        st.warning("⚠️ 本番環境ではこの選択肢は表示されません")
         
         # 権限のあるユーザーを取得
         valid_permissions = ["4. 承認者", "3. 利用者・承認者", "2. システム管理者"]
@@ -391,7 +427,7 @@ def handle_authentication():
     # 設定ガイド
     if not config["has_oauth"]:
         st.markdown("---")
-        st.markdown("#### Google OAuth設定")
+        st.markdown("#### ⚙️ Google OAuth設定")
         st.info("本格的なGoogle認証を有効にするには、Streamlit Secretsに以下を追加してください:")
         st.code("""
 GOOGLE_CLIENT_ID = "your-client-id"
@@ -470,25 +506,24 @@ def main_app():
     # ヘッダー
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.title("勤怠確認チェックツール")
+        st.title("📊 勤怠確認チェックツール")
     with col2:
-        if st.button("ログアウト"):
-            # ログアウト時にredirect_initiatedもリセット
-            for key in ['authenticated', 'redirect_initiated']:
-                if key in st.session_state:
-                    del st.session_state[key]
-            st.query_params.clear()  # URLパラメータをクリア
+        if st.button("🚪 ログアウト"):
+            # セッション状態をクリア
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.query_params.clear()
             st.rerun()
     
     # 認証方法の表示
     auth_method = "Google OAuth認証" if "code" in st.query_params else "開発モード"
-    st.markdown(f"<div class='auth-method'>認証方法: {auth_method}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='auth-method'>🔐 認証方法: {auth_method}</div>", unsafe_allow_html=True)
     
     # ユーザー情報表示
     st.markdown(f"""
     <div class='user-info'>
-        <strong>ログインユーザー:</strong> {st.session_state.user_name} ({st.session_state.user_email})<br>
-        <strong>権限:</strong> {user_permission}
+        <strong>👤 ログインユーザー:</strong> {st.session_state.user_name} ({st.session_state.user_email})<br>
+        <strong>🔑 権限:</strong> {user_permission}
     </div>
     """, unsafe_allow_html=True)
     
@@ -529,7 +564,7 @@ def main_app():
     
     if len(filtered) > 0:
         permission_label = "全スタッフ" if user_permission == "2. システム管理者" else "承認対象スタッフ"
-        st.markdown(f"<div class='header-box'>{permission_label}: {len(filtered)}名</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='header-box'>📋 {permission_label}: {len(filtered)}名</div>", unsafe_allow_html=True)
         
         if available_columns:
             # データをそのまま表示（一切の加工なし）
@@ -539,9 +574,9 @@ def main_app():
             st.warning("表示可能な列が見つかりません。")
     else:
         if user_permission in ["4. 承認者", "3. 利用者・承認者"]:
-            st.info("承認対象のスタッフがいません。第一承認者として割り当てられているスタッフのデータのみ表示されます。")
+            st.info("📋 承認対象のスタッフがいません。第一承認者として割り当てられているスタッフのデータのみ表示されます。")
         else:
-            st.info("表示可能なデータがありません。")
+            st.info("📋 表示可能なデータがありません。")
 
 # --- メイン実行 ---
 if __name__ == "__main__":
