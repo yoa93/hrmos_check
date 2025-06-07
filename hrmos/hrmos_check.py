@@ -385,39 +385,35 @@ def handle_authentication():
         auth_url = get_google_auth_url()
         if auth_url:
             st.markdown("#### Google アカウント認証")
-            st.info("Googleアカウントでログインしてください。")
+            st.info("下記のリンクをクリックしてGoogleアカウントでログインしてください。")
             
-            # JavaScriptを使ったリダイレクト
+            # メインの認証リンク（Googleスタイル）
             st.markdown(f"""
             <div style="text-align: center; margin: 20px 0;">
-                <button onclick="window.open('{auth_url}', '_blank')" style="
+                <a href="{auth_url}" target="_blank" style="
                     background-color: #4285f4;
                     color: white;
-                    border: none;
+                    text-decoration: none;
                     padding: 12px 24px;
                     font-size: 16px;
                     border-radius: 4px;
-                    cursor: pointer;
                     display: inline-flex;
                     align-items: center;
                     gap: 8px;
+                    max-width: 300px;
                     width: 100%;
                     justify-content: center;
-                    max-width: 300px;
-                ">
+                    font-weight: 500;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                    transition: background-color 0.3s;
+                " onmouseover="this.style.backgroundColor='#3367d6'" 
+                   onmouseout="this.style.backgroundColor='#4285f4'">
                     🔐 Googleでログイン
-                </button>
+                </a>
             </div>
-            <script>
-                function redirectToGoogle() {{
-                    window.location.href = '{auth_url}';
-                }}
-            </script>
             """, unsafe_allow_html=True)
             
-            # 代替リンクも提供
-            st.markdown(f"ボタンが動作しない場合は、[こちらのリンク]({auth_url})をクリックしてください。")
-            
+            st.markdown("✅ 認証完了後、自動的にこのページに戻ります")
             st.markdown("---")
     
     # 開発モード
