@@ -128,7 +128,8 @@ def get_google_user_info(code):
 
 def check_user_permission(email, df_staff):
     """ユーザーの権限チェック"""
-    valid_permissions = ["4. 承認者", "3. 利用者・承認者", "2. システム管理者"]
+    # 全ての権限レベルを許可（一般利用者も含む）
+    valid_permissions = ["4. 承認者", "3. 利用者・承認者", "2. システム管理者", "1. 利用者"]
     user_data = df_staff[
         (df_staff["ログインID"] == email) & 
         (df_staff["権限"].isin(valid_permissions))
@@ -376,7 +377,7 @@ def handle_authentication():
         st.warning("⚠️ 本番環境ではこの選択肢は表示されません")
         
         # 権限のあるユーザーを取得
-        valid_permissions = ["4. 承認者", "3. 利用者・承認者", "2. システム管理者"]
+        valid_permissions = ["4. 承認者", "3. 利用者・承認者", "2. システム管理者", "1. 利用者"]
         
         if "権限" not in df_staff.columns:
             st.error("社員一覧に「権限」列が見つかりません。")
@@ -471,16 +472,24 @@ def main_app():
     
     # 現在ログインしているユーザーのフルネーム
     current_user_fullname = st.session_state.user_name
+    current_user_login_id = user_info.get("ログインID", "")
+    current_user_employee_id = user_info.get("社員番号", "")
     
     if user_permission == "2. システム管理者":
+        # システム管理者：全データを表示
         filtered = merged.copy()
     elif user_permission in ["4. 承認者", "3. 利用者・承認者"]:
-        # フルネームまたはログインIDで承認対象をフィルタリング
-        user_login_id = user_info.get("ログインID", "")
+        # 承認者：承認対象のスタッフのデータを表示
         filtered = merged[
-            (merged["承認者"] == user_login_id) |  # ログインIDでの一致
+            (merged["承認者"] == current_user_login_id) |  # ログインIDでの一致
             (merged["承認者"] == current_user_fullname) |  # フルネームでの一致
             (merged["承認者フルネーム"] == current_user_fullname)  # 承認者フルネームでの一致
+        ]
+    elif user_permission == "1. 利用者":
+        # 一般利用者：自分のデータのみ表示
+        filtered = merged[
+            (merged["社員番号"] == current_user_employee_id) |  # 社員番号での一致
+            (merged["ログインID"] == current_user_login_id) if "ログインID" in merged.columns else False  # ログインIDでの一致（列が存在する場合）
         ]
     else:
         filtered = merged.iloc[0:0]
@@ -529,28 +538,44 @@ def main_app():
     
     # 開発モード時のデバッグ情報
     config = get_config()
-    if config["development_mode"] and user_permission in ["4. 承認者", "3. 利用者・承認者"]:
-        with st.expander("🔍 デバッグ情報（承認者マッチング）"):
+    if config["development_mode"]:
+        with st.expander("🔍 デバッグ情報"):
             st.write(f"**現在のユーザー名:** {current_user_fullname}")
-            st.write(f"**ログインID:** {user_info.get('ログインID', '')}")
+            st.write(f"**ログインID:** {current_user_login_id}")
+            st.write(f"**社員番号:** {current_user_employee_id}")
+            st.write(f"**権限:** {user_permission}")
             
-            # 承認者として設定されているデータの確認
-            approval_matches = merged[
-                (merged["承認者"] == user_info.get('ログインID', '')) |
-                (merged["承認者"] == current_user_fullname) |
-                (merged["承認者フルネーム"] == current_user_fullname)
-            ]
+            if user_permission in ["4. 承認者", "3. 利用者・承認者"]:
+                # 承認者として設定されているデータの確認
+                approval_matches = merged[
+                    (merged["承認者"] == current_user_login_id) |
+                    (merged["承認者"] == current_user_fullname) |
+                    (merged["承認者フルネーム"] == current_user_fullname)
+                ]
+                
+                if len(approval_matches) > 0:
+                    st.write(f"**承認対象者数:** {len(approval_matches)}名")
+                    st.write("**承認対象者一覧:**")
+                    debug_display = approval_matches[["社員番号", "名前", "承認者", "承認者フルネーム"]].head(10)
+                    st.dataframe(debug_display)
+                else:
+                    st.write("**承認対象者:** なし")
+                    st.write("**確認項目:**")
+                    st.write("- 勤怠データの「第一承認者」列にあなたの名前またはログインIDが設定されているか")
+                    st.write("- 姓名の表記が一致しているか（姓名間のスペースなど）")
             
-            if len(approval_matches) > 0:
-                st.write(f"**承認対象者数:** {len(approval_matches)}名")
-                st.write("**承認対象者一覧:**")
-                debug_display = approval_matches[["社員番号", "名前", "承認者", "承認者フルネーム"]].head(10)
-                st.dataframe(debug_display)
-            else:
-                st.write("**承認対象者:** なし")
-                st.write("**確認項目:**")
-                st.write("- 勤怠データの「第一承認者」列にあなたの名前またはログインIDが設定されているか")
-                st.write("- 姓名の表記が一致しているか（姓名間のスペースなど）")
+            elif user_permission == "1. 利用者":
+                st.write("**表示対象:** 自分のデータのみ")
+                st.write(f"**フィルタリング条件:** 社員番号={current_user_employee_id}")
+                
+                if len(filtered) > 0:
+                    st.write("**自分のデータ:**")
+                    st.dataframe(filtered[["社員番号", "名前"]].head(1))
+                else:
+                    st.write("**注意:** 自分のデータが見つかりません")
+                    st.write("確認項目:")
+                    st.write("- 勤怠データに自分の社員番号が存在するか")
+                    st.write("- 社員一覧の社員番号と勤怠データの社員番号が一致しているか")
     
     # データ表示
     display_columns = [
@@ -563,7 +588,15 @@ def main_app():
     available_columns = [col for col in display_columns if col in filtered.columns]
     
     if len(filtered) > 0:
-        permission_label = "全スタッフ" if user_permission == "2. システム管理者" else "承認対象スタッフ"
+        if user_permission == "2. システム管理者":
+            permission_label = "全スタッフ"
+        elif user_permission in ["4. 承認者", "3. 利用者・承認者"]:
+            permission_label = "承認対象スタッフ"
+        elif user_permission == "1. 利用者":
+            permission_label = "自分の勤怠データ"
+        else:
+            permission_label = "表示データ"
+            
         st.markdown(f"<div class='header-box'>📋 {permission_label}: {len(filtered)}名</div>", unsafe_allow_html=True)
         
         if available_columns:
@@ -573,8 +606,12 @@ def main_app():
         else:
             st.warning("表示可能な列が見つかりません。")
     else:
-        if user_permission in ["4. 承認者", "3. 利用者・承認者"]:
+        if user_permission == "2. システム管理者":
+            st.info("📋 表示可能なデータがありません。")
+        elif user_permission in ["4. 承認者", "3. 利用者・承認者"]:
             st.info("📋 承認対象のスタッフがいません。第一承認者として割り当てられているスタッフのデータのみ表示されます。")
+        elif user_permission == "1. 利用者":
+            st.info("📋 あなたの勤怠データが見つかりません。社員番号が正しく設定されているか確認してください。")
         else:
             st.info("📋 表示可能なデータがありません。")
 
