@@ -241,6 +241,44 @@ def load_spreadsheet_data():
         st.info("3. 「勤怠確認シート(打刻管理)」シートと「社員一覧」シートが存在するか")
         return None, None
 
+# --- ユーザーフィルタリング関数（修正版） ---
+def apply_user_filter(merged, user_permission, current_user_fullname, current_user_login_id, current_user_employee_id):
+    """ユーザー権限に基づくデータフィルタリング"""
+    
+    if user_permission == "2. システム管理者":
+        # システム管理者：全データを表示
+        return merged.copy()
+        
+    elif user_permission in ["4. 承認者", "3. 利用者・承認者"]:
+        # 承認者：承認対象のスタッフのデータを表示
+        return merged[
+            (merged["承認者"] == current_user_login_id) |  # ログインIDでの一致
+            (merged["承認者"] == current_user_fullname) |  # フルネームでの一致
+            (merged["承認者フルネーム"] == current_user_fullname)  # 承認者フルネームでの一致
+        ]
+        
+    elif user_permission == "5. 一般利用者":
+        # データ型を統一してクリーニング
+        merged_clean = merged.copy()
+        merged_clean["社員番号"] = merged_clean["社員番号"].astype(str).str.strip()
+        current_user_employee_id_clean = str(current_user_employee_id).strip()
+        
+        # 基本条件：社員番号での一致
+        conditions = (merged_clean["社員番号"] == current_user_employee_id_clean)
+        
+        # ログインID列が存在する場合の追加条件
+        if "ログインID" in merged_clean.columns:
+            merged_clean["ログインID"] = merged_clean["ログインID"].astype(str).str.strip()
+            current_user_login_id_clean = str(current_user_login_id).strip()
+            login_conditions = (merged_clean["ログインID"] == current_user_login_id_clean)
+            conditions = conditions | login_conditions
+        
+        return merged_clean[conditions]
+    
+    else:
+        # 不明な権限の場合は空のデータフレームを返す
+        return merged.iloc[0:0]
+
 # --- 認証システム ---
 def handle_authentication():
     """認証処理"""
@@ -475,24 +513,14 @@ def main_app():
     current_user_login_id = user_info.get("ログインID", "")
     current_user_employee_id = user_info.get("社員番号", "")
     
-    if user_permission == "2. システム管理者":
-        # システム管理者：全データを表示
-        filtered = merged.copy()
-    elif user_permission in ["4. 承認者", "3. 利用者・承認者"]:
-        # 承認者：承認対象のスタッフのデータを表示
-        filtered = merged[
-            (merged["承認者"] == current_user_login_id) |  # ログインIDでの一致
-            (merged["承認者"] == current_user_fullname) |  # フルネームでの一致
-            (merged["承認者フルネーム"] == current_user_fullname)  # 承認者フルネームでの一致
-        ]
-    elif user_permission == "5. 一般利用者":
-        # 一般利用者：自分のデータのみ表示
-        filtered = merged[
-            (merged["社員番号"] == current_user_employee_id) |  # 社員番号での一致
-            (merged["ログインID"] == current_user_login_id) if "ログインID" in merged.columns else False  # ログインIDでの一致（列が存在する場合）
-        ]
-    else:
-        filtered = merged.iloc[0:0]
+    # 修正されたフィルタリング関数を使用
+    filtered = apply_user_filter(
+        merged, 
+        user_permission, 
+        current_user_fullname, 
+        current_user_login_id, 
+        current_user_employee_id
+    )
     
     # UI
     st.markdown("""
@@ -573,9 +601,14 @@ def main_app():
                     st.dataframe(filtered[["社員番号", "名前"]].head(1))
                 else:
                     st.write("**注意:** 自分のデータが見つかりません")
-                    st.write("確認項目:")
-                    st.write("- 勤怠データに自分の社員番号が存在するか")
-                    st.write("- 社員一覧の社員番号と勤怠データの社員番号が一致しているか")
+                    st.write("**検索に使用した情報:**")
+                    st.write(f"- 社員番号: '{current_user_employee_id}'")
+                    st.write(f"- ログインID: '{current_user_login_id}'")
+                    
+                    st.write("**勤怠データ内の社員番号（最初の5件）:**")
+                    sample_ids = merged["社員番号"].unique()[:5]
+                    for sid in sample_ids:
+                        st.write(f"- '{sid}'")
     
     # データ表示
     display_columns = [
@@ -611,7 +644,26 @@ def main_app():
         elif user_permission in ["4. 承認者", "3. 利用者・承認者"]:
             st.info("📋 承認対象のスタッフがいません。第一承認者として割り当てられているスタッフのデータのみ表示されます。")
         elif user_permission == "5. 一般利用者":
-            st.info("📋 あなたの勤怠データが見つかりません。社員番号が正しく設定されているか確認してください。")
+            st.info("📋 あなたの勤怠データが見つかりません。")
+            
+            # デバッグ情報を表示
+            with st.expander("🔍 詳細情報（トラブルシューティング）"):
+                st.write(f"**検索条件:**")
+                st.write(f"- 社員番号: '{current_user_employee_id}'")
+                st.write(f"- ログインID: '{current_user_login_id}'")
+                
+                st.write(f"**勤怠データ内の社員番号一覧（最初の10件）:**")
+                unique_ids = merged["社員番号"].unique()[:10]
+                for uid in unique_ids:
+                    st.write(f"- '{uid}'")
+                
+                st.write(f"**完全一致チェック:**")
+                exact_match = merged[merged["社員番号"].astype(str).str.strip() == str(current_user_employee_id).strip()]
+                st.write(f"- 社員番号完全一致: {len(exact_match)}件")
+                
+                if "ログインID" in merged.columns:
+                    login_match = merged[merged["ログインID"].astype(str).str.strip() == str(current_user_login_id).strip()]
+                    st.write(f"- ログインID完全一致: {len(login_match)}件")
         else:
             st.info("📋 表示可能なデータがありません。")
 
