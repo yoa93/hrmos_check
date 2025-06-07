@@ -46,11 +46,31 @@ def get_config():
             if "gcp_service_account" in st.secrets:
                 config["has_gcp_account"] = True
             
-            # Google OAuth設定の確認
-            if all(key in st.secrets for key in ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "REDIRECT_URI"]):
-                config["has_oauth"] = True
-    except Exception:
-        pass
+            # Google OAuth設定の確認（より詳細な検証）
+            required_oauth_keys = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]
+            oauth_keys_present = all(key in st.secrets for key in required_oauth_keys)
+            
+            if oauth_keys_present:
+                # 値が空でないかチェック
+                client_id = str(st.secrets.get("GOOGLE_CLIENT_ID", "")).strip()
+                client_secret = str(st.secrets.get("GOOGLE_CLIENT_SECRET", "")).strip()
+                
+                if client_id and client_secret:
+                    # クライアントシークレットの形式をチェック
+                    if client_secret.startswith("GOCSPX-") and len(client_secret) > 10:
+                        config["has_oauth"] = True
+                    elif len(client_secret) > 20:  # 旧形式のシークレット
+                        config["has_oauth"] = True
+                    else:
+                        config["oauth_error"] = "クライアントシークレットの形式が正しくありません"
+                else:
+                    config["oauth_error"] = "クライアントIDまたはシークレットが空です"
+            else:
+                missing_keys = [key for key in required_oauth_keys if key not in st.secrets]
+                config["oauth_error"] = f"必要なキーが不足: {missing_keys}"
+                
+    except Exception as e:
+        config["config_error"] = str(e)
     
     return config
 
@@ -65,22 +85,23 @@ def get_google_auth_url():
     
     client_id = st.secrets["GOOGLE_CLIENT_ID"]
     
-    # 現在のURLを正確に取得
+    # 現在の環境を判定してリダイレクトURIを決定
     try:
-        # Streamlit Cloud の環境変数から取得
-        if "STREAMLIT_SHARING_MODE" in os.environ or "streamlit.app" in os.environ.get("HOST", ""):
+        # Streamlit Cloud環境の検出
+        if (hasattr(st, 'get_option') and 
+            st.get_option('server.headless') and 
+            'streamlit.app' in str(st.secrets.get("REDIRECT_URI", ""))):
             # Streamlit Cloud環境
-            app_name = os.environ.get("STREAMLIT_APP_NAME", "")
-            if app_name:
-                redirect_uri = f"https://{app_name}.streamlit.app/"
-            else:
-                # フォールバック: secretsから取得
-                redirect_uri = st.secrets.get("REDIRECT_URI", "https://your-app.streamlit.app/")
-        else:
+            redirect_uri = st.secrets.get("REDIRECT_URI", "https://your-app.streamlit.app/")
+        elif 'localhost' in str(st.secrets.get("REDIRECT_URI", "")) or 'localhost' in os.environ.get("HOST", ""):
             # ローカル環境
             redirect_uri = "http://localhost:8501/"
+        else:
+            # 設定されたREDIRECT_URIを使用
+            redirect_uri = st.secrets.get("REDIRECT_URI", "http://localhost:8501/")
+            
     except:
-        # エラー時のフォールバック
+        # フォールバック
         redirect_uri = st.secrets.get("REDIRECT_URI", "http://localhost:8501/")
     
     # デバッグ情報表示（開発モードのみ）
@@ -111,18 +132,19 @@ def get_google_user_info(code):
         return None
     
     try:
-        # 現在のURLを正確に取得（認証時と同じロジック）
+        # 現在の環境を判定してリダイレクトURIを決定（認証時と同じロジック）
         try:
-            if "STREAMLIT_SHARING_MODE" in os.environ or "streamlit.app" in os.environ.get("HOST", ""):
+            if (hasattr(st, 'get_option') and 
+                st.get_option('server.headless') and 
+                'streamlit.app' in str(st.secrets.get("REDIRECT_URI", ""))):
                 # Streamlit Cloud環境
-                app_name = os.environ.get("STREAMLIT_APP_NAME", "")
-                if app_name:
-                    redirect_uri = f"https://{app_name}.streamlit.app/"
-                else:
-                    redirect_uri = st.secrets.get("REDIRECT_URI", "https://your-app.streamlit.app/")
-            else:
+                redirect_uri = st.secrets.get("REDIRECT_URI", "https://your-app.streamlit.app/")
+            elif 'localhost' in str(st.secrets.get("REDIRECT_URI", "")) or 'localhost' in os.environ.get("HOST", ""):
                 # ローカル環境
                 redirect_uri = "http://localhost:8501/"
+            else:
+                # 設定されたREDIRECT_URIを使用
+                redirect_uri = st.secrets.get("REDIRECT_URI", "http://localhost:8501/")
         except:
             redirect_uri = st.secrets.get("REDIRECT_URI", "http://localhost:8501/")
         
@@ -155,6 +177,7 @@ def get_google_user_info(code):
             st.error("Google Cloud Console で以下を確認してください:")
             st.error(f"1. {redirect_uri} が承認済みリダイレクトURIに登録されているか")
             st.error("2. クライアントIDとシークレットが正しいか")
+            st.error("3. 認証コードが期限切れでないか（10分以内に使用）")
             return None
             
         token_json = token_response.json()
@@ -419,8 +442,55 @@ def handle_authentication():
     with status_cols[2]:
         if config["has_oauth"]:
             st.success("✅ Google OAuth")
+        elif "oauth_error" in config:
+            st.error("❌ Google OAuth")
+            st.error(f"エラー: {config['oauth_error']}")
         else:
             st.error("❌ Google OAuth")
+    
+    # 設定エラーの表示
+    if "config_error" in config:
+        st.error(f"設定エラー: {config['config_error']}")
+    
+    # OAuth設定の詳細チェック
+    if config["has_secrets"] and not config["has_oauth"]:
+        with st.expander("🔧 OAuth設定の詳細診断"):
+            st.markdown("**現在のOAuth設定状況:**")
+            
+            # 各キーの存在チェック
+            oauth_keys = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "REDIRECT_URI"]
+            for key in oauth_keys:
+                if key in st.secrets:
+                    value = str(st.secrets[key]).strip()
+                    if value:
+                        if key == "GOOGLE_CLIENT_SECRET":
+                            # シークレットは最初の数文字のみ表示
+                            display_value = f"{value[:10]}..." if len(value) > 10 else "短すぎます"
+                            if value.startswith("GOCSPX-"):
+                                st.success(f"✅ {key}: {display_value} (正しい形式)")
+                            else:
+                                st.warning(f"⚠️ {key}: {display_value} (GOCSPX-で始まらない)")
+                        else:
+                            st.success(f"✅ {key}: {value}")
+                    else:
+                        st.error(f"❌ {key}: 空の値")
+                else:
+                    st.error(f"❌ {key}: 設定されていません")
+            
+            # 正しい設定例を表示
+            st.markdown("**正しい設定例 (secrets.toml):**")
+            st.code('''
+GOOGLE_CLIENT_ID = "123456789-abcdefg.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET = "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"
+REDIRECT_URI = "https://your-app-name.streamlit.app/"
+DEVELOPMENT_MODE = true
+            ''')
+            
+            st.markdown("**重要なポイント:**")
+            st.markdown("- すべての値を引用符(\")で囲む")
+            st.markdown("- クライアントシークレットは GOCSPX- で始まる")
+            st.markdown("- REDIRECT_URI は実際のアプリURL")
+            st.markdown("- ハイフンやドットを含む値は必ず引用符で囲む")
     
     # データ読み込みテスト
     with st.spinner("データ接続を確認中..."):
@@ -562,18 +632,38 @@ def handle_authentication():
                                        placeholder="例: https://your-app-name.streamlit.app/",
                                        help="Streamlit CloudのアプリURLを入力してください")
                 
+                # Secrets.tomlの設定例も表示
+                st.write("**Streamlit Secrets (secrets.toml) の設定例:**")
+                
                 if app_url:
                     # 入力されたURLから推奨URIを生成
+                    app_url_clean = app_url.rstrip('/')
                     recommended_uris = [
-                        app_url.rstrip('/') + '/',
-                        app_url.rstrip('/')
+                        f"{app_url_clean}/",
+                        app_url_clean
                     ]
+                    
+                    st.code(f"""
+GOOGLE_CLIENT_ID = "your-google-client-id"
+GOOGLE_CLIENT_SECRET = "your-google-client-secret"
+REDIRECT_URI = "{app_url_clean}/"
+DEVELOPMENT_MODE = false
+                    """)
                 else:
                     # デフォルトの推奨URI
                     recommended_uris = [
                         "https://your-app-name.streamlit.app/",
                         "https://your-app-name.streamlit.app"
                     ]
+                    
+                    st.code("""
+GOOGLE_CLIENT_ID = "your-google-client-id"
+GOOGLE_CLIENT_SECRET = "your-google-client-secret"
+REDIRECT_URI = "https://your-app-name.streamlit.app/"
+DEVELOPMENT_MODE = false
+                    """)
+                
+                st.write("**Google Cloud Console に登録するURI:**")
                 
                 # ローカル開発用URI
                 recommended_uris.extend([
@@ -583,32 +673,18 @@ def handle_authentication():
                     "http://127.0.0.1:8501"
                 ])
                 
-                for uri in recommended_uris:
-                    st.code(uri)
+                for i, uri in enumerate(recommended_uris, 1):
+                    st.code(f"{i}. {uri}")
+                
+                # 現在の設定状況
+                current_redirect = st.secrets.get("REDIRECT_URI", "未設定")
+                st.write(f"**現在の設定:** `REDIRECT_URI = {current_redirect}`")
+                
+                if 'localhost' in current_redirect and app_url and 'streamlit.app' in app_url:
+                    st.warning("⚠️ **設定不一致**: Streamlit Cloudで動作中ですが、REDIRECT_URIがlocalhostに設定されています。")
+                    st.info(f"REDIRECT_URIを `{app_url.rstrip('/')}/` に変更してください。")
             
-            # 追加のトラブルシューティング情報
-            with st.expander("🔧 トラブルシューティング"):
-                st.markdown("""
-                **認証がうまくいかない場合:**
-                
-                **1. Google Cloud Console の設定確認**
-                - [Google Cloud Console](https://console.cloud.google.com/) にアクセス
-                - 「APIとサービス」→「認証情報」→ OAuthクライアントIDを編集
-                - 「承認済みのリダイレクトURI」に正しいURLが登録されているか確認
-                
-                **2. OAuth同意画面の設定**
-                - 「APIとサービス」→「OAuth同意画面」
-                - テストモードの場合：「テストユーザー」にログインユーザーを追加
-                - または「本番環境に公開」を選択
-                
-                **3. よくあるエラー**
-                - **redirect_uri_mismatch**: リダイレクトURIの設定不備
-                - **unauthorized_client**: OAuth同意画面の設定未完了
-                - **access_denied**: テストユーザー未追加、または認証拒否
-                
-                **4. 代替案：開発モード**
-                下記の開発モードを使用することも可能です（テスト目的のみ）。
-                """)
+            
             
             st.markdown("---")
     
