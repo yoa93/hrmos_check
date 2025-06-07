@@ -387,9 +387,36 @@ def handle_authentication():
             st.markdown("#### Google アカウント認証")
             st.info("Googleアカウントでログインしてください。")
             
-            if st.button("🔐 Googleでログイン", type="primary", use_container_width=True):
-                st.markdown(f'<meta http-equiv="refresh" content="0;url={auth_url}">', unsafe_allow_html=True)
-                st.markdown(f"[こちらをクリック]({auth_url})してGoogle認証を完了してください。", unsafe_allow_html=True)
+            # JavaScriptを使ったリダイレクト
+            st.markdown(f"""
+            <div style="text-align: center; margin: 20px 0;">
+                <button onclick="window.open('{auth_url}', '_blank')" style="
+                    background-color: #4285f4;
+                    color: white;
+                    border: none;
+                    padding: 12px 24px;
+                    font-size: 16px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 8px;
+                    width: 100%;
+                    justify-content: center;
+                    max-width: 300px;
+                ">
+                    🔐 Googleでログイン
+                </button>
+            </div>
+            <script>
+                function redirectToGoogle() {{
+                    window.location.href = '{auth_url}';
+                }}
+            </script>
+            """, unsafe_allow_html=True)
+            
+            # 代替リンクも提供
+            st.markdown(f"ボタンが動作しない場合は、[こちらのリンク]({auth_url})をクリックしてください。")
             
             st.markdown("---")
     
