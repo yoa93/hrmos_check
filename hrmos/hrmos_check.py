@@ -684,7 +684,29 @@ DEVELOPMENT_MODE = false
                     st.warning("⚠️ **設定不一致**: Streamlit Cloudで動作中ですが、REDIRECT_URIがlocalhostに設定されています。")
                     st.info(f"REDIRECT_URIを `{app_url.rstrip('/')}/` に変更してください。")
             
-            
+            # 追加のトラブルシューティング情報
+            with st.expander("🔧 トラブルシューティング"):
+                st.markdown("""
+                **認証がうまくいかない場合:**
+                
+                **1. Google Cloud Console の設定確認**
+                - [Google Cloud Console](https://console.cloud.google.com/) にアクセス
+                - 「APIとサービス」→「認証情報」→ OAuthクライアントIDを編集
+                - 「承認済みのリダイレクトURI」に正しいURLが登録されているか確認
+                
+                **2. OAuth同意画面の設定**
+                - 「APIとサービス」→「OAuth同意画面」
+                - テストモードの場合：「テストユーザー」にログインユーザーを追加
+                - または「本番環境に公開」を選択
+                
+                **3. よくあるエラー**
+                - **redirect_uri_mismatch**: リダイレクトURIの設定不備
+                - **unauthorized_client**: OAuth同意画面の設定未完了
+                - **access_denied**: テストユーザー未追加、または認証拒否
+                
+                **4. 代替案：開発モード**
+                下記の開発モードを使用することも可能です（テスト目的のみ）。
+                """)
             
             st.markdown("---")
     
