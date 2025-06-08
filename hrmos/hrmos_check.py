@@ -516,6 +516,27 @@ def main_app():
             font-size: 20px; font-weight: bold; padding: 0.5rem;
             display: inline-block; margin-bottom: 1rem;
         }
+        /* スマホ対応：データフレームの行番号を非表示 */
+        .stDataFrame div[data-testid="stDataFrameResizable"] > div > div > div > div > div:first-child {
+            display: none !important;
+        }
+        /* データフレームの列幅調整 */
+        .stDataFrame {
+            font-size: 14px;
+        }
+        /* スマホ向けレスポンシブ調整 */
+        @media (max-width: 768px) {
+            .stDataFrame {
+                font-size: 12px;
+            }
+            .user-info {
+                font-size: 14px;
+                padding: 0.8rem;
+            }
+            .header-box {
+                font-size: 18px;
+            }
+        }
     </style>
     """, unsafe_allow_html=True)
     
@@ -561,7 +582,36 @@ def main_app():
         
         if available_columns:
             display_df = filtered[available_columns]
-            st.dataframe(display_df, use_container_width=True)
+            
+            # スマホ対応：社員番号と名前を固定列として表示するためのデータフレーム設定
+            st.dataframe(
+                display_df,
+                use_container_width=True,
+                hide_index=True,  # これで行番号（インデックス）を非表示にする
+                column_config={
+                    "社員番号": st.column_config.TextColumn(
+                        "社員番号",
+                        width="small",
+                        pinned="left"  # 左側に固定
+                    ),
+                    "名前": st.column_config.TextColumn(
+                        "名前", 
+                        width="medium",
+                        pinned="left"  # 左側に固定
+                    ),
+                    "休日出勤": st.column_config.TextColumn("休日出勤", width="small"),
+                    "有休日数": st.column_config.TextColumn("有休日数", width="small"),
+                    "欠勤日数": st.column_config.TextColumn("欠勤日数", width="small"),
+                    "出勤時間": st.column_config.TextColumn("出勤時間", width="small"),
+                    "総残業時間": st.column_config.TextColumn("総残業時間", width="small"),
+                    "規定残業時間": st.column_config.TextColumn("規定残業時間", width="small"),
+                    "規定残業超過分": st.column_config.TextColumn("規定残業超過分", width="small"),
+                    "深夜残業時間": st.column_config.TextColumn("深夜残業時間", width="small"),
+                    "60時間超過残業": st.column_config.TextColumn("60時間超過残業", width="small"),
+                    "打刻ズレ": st.column_config.TextColumn("打刻ズレ", width="small"),
+                    "勤怠マイナス分": st.column_config.TextColumn("勤怠マイナス分", width="small")
+                }
+            )
         else:
             st.warning("表示可能な列が見つかりません。")
     else:
